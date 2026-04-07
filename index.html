@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vision API Tester | CasitaApps</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .checkerboard {
+            background-color: #f0f0f0;
+            background-image: linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc),
+                              linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc);
+            background-size: 20px 20px;
+            background-position: 0 0, 10px 10px;
+        }
+        .drag-active { border-color: #3b82f6 !important; background-color: #eff6ff !important; }
+        .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; font-weight: bold; }
+        /* Critical fix for Canvas Scaling */
+        .overlay-canvas { width: 100%; height: 100%; object-fit: contain; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen">
+
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold">V</div>
+                <h1 class="text-xl font-bold">Vision API Tester</h1>
+            </div>
+            <span class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold flex items-center gap-2">
+                <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span> Service Online
+            </span>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
+        
+        <div class="lg:col-span-4 space-y-6">
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                <h2 class="font-bold text-lg mb-4 text-slate-800">1. Image Input</h2>
+                
+                <div id="dropzone" class="border-2 border-dashed border-slate-300 rounded-xl p-8 text-center cursor-pointer hover:bg-slate-50 transition relative group">
+                    <input type="file" id="fileInput" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+                    <svg class="w-10 h-10 mx-auto text-slate-400 group-hover:text-blue-500 transition mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                    <p class="text-sm font-medium text-slate-600">Drag & Drop profile image</p>
+                </div>
+
+                <div class="flex items-center gap-3 my-4">
+                    <hr class="flex-1 border-slate-200"><span class="text-xs text-slate-400 font-bold uppercase">or</span><hr class="flex-1 border-slate-200">
+                </div>
+
+                <div class="flex gap-2">
+                    <input type="text" id="urlInput" placeholder="Paste image URL..." class="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                    <button onclick="analyzeImage()" id="analyzeBtn" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-700 transition flex items-center justify-center min-w-[100px]">
+                        Analyze
+                    </button>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-0 overflow-hidden flex flex-col h-[500px]">
+                <div class="bg-slate-800 px-4 py-3 border-b border-slate-900 flex justify-between items-center">
+                    <h2 class="font-bold text-sm text-slate-200">API JSON Contract</h2>
+                </div>
+                <div class="bg-slate-900 flex-1 overflow-auto p-4 relative">
+                    <pre id="jsonOutput" class="text-xs text-green-400 font-mono leading-relaxed">Waiting for image...</pre>
+                </div>
+            </div>
+        </div>
+
+        <div class="lg:col-span-8 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[850px]">
+            
+            <div class="flex border-b border-slate-200 px-6 pt-4 gap-6 text-sm text-slate-500">
+                <button onclick="switchTab('vision')" id="tab-vision" class="pb-3 tab-active">Vision Overlays</button>
+                <button onclick="switchTab('background')" id="tab-background" class="pb-3 hover:text-slate-800">Background Swapper</button>
+            </div>
+
+            <div class="p-6 flex-1 bg-slate-100 flex items-center justify-center relative overflow-hidden">
+                <p id="placeholder" class="text-slate-400 font-medium z-0">Upload an image to see results</p>
+
+                <!-- TAB 1: Vision Overlays -->
+                <div id="vision-view" class="hidden absolute inset-6 flex items-center justify-center">
+                    <div class="relative max-h-full max-w-full flex items-center justify-center">
+                        <img id="sourceImage" class="max-h-full max-w-full object-contain rounded shadow-md" crossorigin="anonymous">
+                        <canvas id="overlayCanvas" class="overlay-canvas absolute top-0 left-0 pointer-events-none"></canvas>
+                    </div>
+                </div>
+
+                <!-- TAB 2: Background Swapper -->
+                <div id="background-view" class="hidden absolute inset-6 flex flex-col items-center justify-center">
+                    <div class="absolute top-0 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur rounded-full shadow-lg px-2 py-2 flex gap-2 z-10 border border-slate-200">
+                        <button onclick="setBg('checkerboard')" class="w-8 h-8 rounded-full border border-slate-300 checkerboard ring-2 ring-offset-1 ring-blue-500 hover:scale-110 transition"></button>
+                        <button onclick="setBg('#3b82f6')" class="w-8 h-8 rounded-full bg-blue-500 hover:scale-110 transition"></button>
+                        <button onclick="setBg('#10b981')" class="w-8 h-8 rounded-full bg-emerald-500 hover:scale-110 transition"></button>
+                        <button onclick="setBg('url(https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=800&q=80)')" class="w-8 h-8 rounded-full hover:scale-110 transition bg-cover bg-center" style="background-image: url(https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=100&q=80);"></button>
+                    </div>
+                    <div id="bgCanvasContainer" class="checkerboard rounded-lg shadow-2xl overflow-hidden mt-12 flex items-center justify-center" style="max-height: calc(100% - 3rem); max-width: 100%;">
+                        <canvas id="compositeCanvas" class="max-h-full max-w-full object-contain"></canvas>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('fileInput');
+        let currentFile = null;
+        let lastApiData = null;
+        let currentBgStyle = 'checkerboard';
+
+        dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drag-active'); });
+        dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-active'));
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('drag-active');
+            if (e.dataTransfer.files.length) {
+                currentFile = e.dataTransfer.files[0];
+                document.getElementById('urlInput').value = ''; 
+                analyzeImage();
+            }
+        });
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length) {
+                currentFile = fileInput.files[0];
+                document.getElementById('urlInput').value = '';
+                analyzeImage();
+            }
+        });
+
+        function switchTab(tab) {
+            document.getElementById('tab-vision').classList.remove('tab-active');
+            document.getElementById('tab-background').classList.remove('tab-active');
+            document.getElementById('tab-' + tab).classList.add('tab-active');
+            
+            document.getElementById('vision-view').classList.add('hidden');
+            document.getElementById('background-view').classList.add('hidden');
+            document.getElementById(tab + '-view').classList.remove('hidden');
+
+            // Force redraw when switching tabs to ensure canvas sizes match DOM
+            if (lastApiData && document.getElementById('sourceImage').complete) {
+                if(tab === 'vision') drawVisionOverlays(lastApiData);
+                if(tab === 'background') setBg(currentBgStyle);
+            }
+        }
+
+        async function analyzeImage() {
+            const urlInput = document.getElementById('urlInput').value;
+            if (!currentFile && !urlInput) return alert("Provide an image file or URL");
+
+            const btn = document.getElementById('analyzeBtn');
+            const output = document.getElementById('jsonOutput');
+            const placeholder = document.getElementById('placeholder');
+            const img = document.getElementById('sourceImage');
+
+            btn.disabled = true;
+            output.innerText = "Analyzing pixel data...";
+            placeholder.style.display = 'none';
+            
+            // Switch to vision view by default
+            switchTab('vision');
+
+            try {
+                const formData = new FormData();
+                if (currentFile && !urlInput) {
+                    img.src = URL.createObjectURL(currentFile);
+                    formData.append("file", currentFile);
+                } else {
+                    img.src = urlInput;
+                    formData.append("imageUrl", urlInput);
+                }
+
+                const serverUrl = window.location.origin !== "null" ? window.location.origin : "http://127.0.0.1:8000";
+                
+                const response = await fetch(`${serverUrl}/analyze`, { method: 'POST', body: formData });
+                if (!response.ok) throw new Error(`Server returned ${response.status}`);
+
+                const data = await response.json();
+                lastApiData = data;
+                output.innerText = JSON.stringify(data, null, 2);
+
+                if (data.ok) {
+                    img.onload = () => {
+                        drawVisionOverlays(data);
+                        if(data.maskAvailable) buildCompositedBackground(img, data.maskUrl);
+                    };
+                    if (img.complete) {
+                        drawVisionOverlays(data);
+                        if(data.maskAvailable) buildCompositedBackground(img, data.maskUrl);
+                    }
+                } else {
+                    alert("Analysis Failed: " + data.error);
+                }
+            } catch (err) {
+                output.innerText = "Fetch Error: " + err.message;
+            } finally {
+                btn.disabled = false;
+                currentFile = null; 
+            }
+        }
+
+        // VISION OVERLAYS
+        function drawVisionOverlays(data) {
+            const img = document.getElementById('sourceImage');
+            const canvas = document.getElementById('overlayCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // Set internal canvas resolution to MATCH the image exact pixels
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const drawBox = (box, color, lineWidth, dashed=false) => {
+                if (!box) return;
+                const x = box.xMin * canvas.width;
+                const y = box.yMin * canvas.height;
+                const w = (box.xMax - box.xMin) * canvas.width;
+                const h = (box.yMax - box.yMin) * canvas.height;
+                
+                ctx.beginPath();
+                ctx.strokeStyle = color;
+                ctx.lineWidth = lineWidth * (canvas.width / 500); // Scale line thickness to image size
+                if (dashed) ctx.setLineDash([15, 15]);
+                else ctx.setLineDash([]);
+                ctx.rect(x, y, w, h);
+                ctx.stroke();
+                
+                if (color === '#ef4444') {
+                    ctx.fillStyle = 'rgba(239, 68, 68, 0.2)';
+                    ctx.fill();
+                }
+            };
+
+            if (data.faceBox) drawBox(data.faceBox, '#3b82f6', 3); 
+            if (data.cropBox) drawBox(data.cropBox, '#22c55e', 2, true); 
+            if (data.eyeBoxes) {
+                drawBox(data.eyeBoxes.leftEye, '#ef4444', 2); 
+                drawBox(data.eyeBoxes.rightEye, '#ef4444', 2); 
+            }
+        }
+
+        // BACKGROUND SWAPPER
+        let extractedForegroundCanvas = null;
+
+        function buildCompositedBackground(originalImg, maskUrl) {
+            const maskImg = new Image();
+            maskImg.crossOrigin = "anonymous";
+            
+            maskImg.onload = () => {
+                const offCanvas = document.createElement('canvas');
+                offCanvas.width = originalImg.naturalWidth;
+                offCanvas.height = originalImg.naturalHeight;
+                const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
+
+                offCtx.drawImage(originalImg, 0, 0, offCanvas.width, offCanvas.height);
+                const imgData = offCtx.getImageData(0, 0, offCanvas.width, offCanvas.height);
+
+                offCtx.clearRect(0, 0, offCanvas.width, offCanvas.height);
+                offCtx.drawImage(maskImg, 0, 0, offCanvas.width, offCanvas.height);
+                const maskData = offCtx.getImageData(0, 0, offCanvas.width, offCanvas.height);
+
+                for (let i = 0; i < imgData.data.length; i += 4) {
+                    imgData.data[i + 3] = maskData.data[i]; 
+                }
+
+                extractedForegroundCanvas = document.createElement('canvas');
+                extractedForegroundCanvas.width = offCanvas.width;
+                extractedForegroundCanvas.height = offCanvas.height;
+                extractedForegroundCanvas.getContext('2d').putImageData(imgData, 0, 0);
+
+                setBg('checkerboard'); // Initialize background
+            };
+            
+            // Set source AFTER setting onload to guarantee execution
+            maskImg.src = maskUrl;
+        }
+
+        function setBg(bgStyle) {
+            currentBgStyle = bgStyle;
+            if (!extractedForegroundCanvas) return;
+            
+            const container = document.getElementById('bgCanvasContainer');
+            const finalCanvas = document.getElementById('compositeCanvas');
+            const ctx = finalCanvas.getContext('2d');
+
+            finalCanvas.width = extractedForegroundCanvas.width;
+            finalCanvas.height = extractedForegroundCanvas.height;
+
+            if (bgStyle === 'checkerboard') {
+                container.className = 'checkerboard rounded-lg shadow-2xl overflow-hidden mt-12 flex items-center justify-center';
+                container.style.background = '';
+            } else {
+                container.className = 'rounded-lg shadow-2xl overflow-hidden mt-12 flex items-center justify-center';
+                container.style.background = bgStyle;
+                if(bgStyle.includes('url')) {
+                    container.style.backgroundSize = 'cover';
+                    container.style.backgroundPosition = 'center';
+                }
+            }
+
+            ctx.clearRect(0, 0, finalCanvas.width, finalCanvas.height);
+            ctx.drawImage(extractedForegroundCanvas, 0, 0);
+        }
+    </script>
+</body>
+</html>

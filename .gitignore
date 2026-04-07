@@ -1,0 +1,12 @@
+# Python Virtual Environment
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Local Data / Cache (Do not upload local test images and masks)
+data/
+*.onnx
+
+# Environment Variables
+.env

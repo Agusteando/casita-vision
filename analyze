@@ -1,0 +1,51 @@
+from fastapi import Form # <-- Ensure Form is imported at the top!
+
+# Delete the AnalyzeRequestUrl BaseModel class entirely, we don't need it.
+
+@app.post("/analyze", response_model=AnalyzeResponse)
+async def analyze_image(
+    imageUrl: Optional[str] = Form(None),  # <-- Changed to Form
+    file: Optional[UploadFile] = File(None)
+):
+    try:
+        # Determine input from Form Data
+        image_bytes = await get_image_bytes(imageUrl, file)
+        
+        image_key = hash_image(image_bytes)
+        cache_file = CACHE_DIR / f"{image_key}.json"
+        
+        if cache_file.exists():
+            logger.info(f"Cache hit for {image_key}")
+            with open(cache_file, "r") as f:
+                return AnalyzeResponse(**json.load(f))
+
+        logger.info(f"Processing new image: {image_key}")
+        metadata, mask_bytes = process_image(image_bytes)
+        
+        mask_available = False
+        mask_url = None
+        if mask_bytes and metadata.get("backgroundRemoved"):
+            mask_path = MASKS_DIR / f"{image_key}.png"
+            with open(mask_path, "wb") as f:
+                f.write(mask_bytes)
+            mask_available = True
+            mask_url = f"{settings.base_url.rstrip('/')}/mask/{image_key}"
+
+        response_data = {
+            "ok": True,
+            "imageKey": image_key,
+            "maskAvailable": mask_available,
+            "maskUrl": mask_url,
+            **metadata
+        }
+
+        with open(cache_file, "w") as f:
+            json.dump(response_data, f)
+
+        return AnalyzeResponse(**response_data)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Analysis failed: {str(e)}")
+        return AnalyzeResponse(ok=False, error=str(e), debug={"exception": type(e).__name__})

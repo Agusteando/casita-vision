@@ -1,0 +1,11 @@
+version: '3.8'
+services:
+  vision-service:
+    build: .
+    container_name: vision-service
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ~/.u2net:/root/.u2net
