@@ -1,15 +1,22 @@
 import io
 import hashlib
+import logging
 from typing import Dict, Any, Tuple
 import numpy as np
 import cv2
 from PIL import Image
 from rembg import remove, new_session
 
-# Initialize Rembg session for background removal
-rembg_session = new_session("u2net")
+logger = logging.getLogger(__name__)
 
-# Initialize OpenCV Haar Cascades
+# NOTA IMPORTANTE: Usamos 'u2netp' (la versión ligera) en lugar de 'u2net'
+# para prevenir caídas y reinicios del servidor por falta de memoria RAM (OOM) en VPS pequeños.
+try:
+    rembg_session = new_session("u2netp")
+except Exception as e:
+    logger.error(f"Error al inicializar el modelo de Rembg: {e}")
+    rembg_session = None
+
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
 
@@ -17,14 +24,11 @@ def hash_image(image_bytes: bytes) -> str:
     return hashlib.sha256(image_bytes).hexdigest()
 
 def process_image(image_bytes: bytes) -> Tuple[Dict[str, Any], bytes]:
-    """Analyzes image, extracts metadata via OpenCV, and generates a mask."""
-    
-    # 1. Load image for OpenCV
     nparr = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     
     if img is None:
-        raise ValueError("Invalid image data. Ensure the file is a valid image.")
+        raise ValueError("Datos de imagen no válidos. Asegúrese de que el archivo sea una imagen válida.")
 
     img_height, img_width = img.shape[:2]
 
@@ -43,7 +47,7 @@ def process_image(image_bytes: bytes) -> Tuple[Dict[str, Any], bytes]:
         }
     }
 
-    # 2. Run Face & Eye Detection
+    # Detección Facial
     try:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(50, 50))
@@ -96,18 +100,28 @@ def process_image(image_bytes: bytes) -> Tuple[Dict[str, Any], bytes]:
             result["debug"]["pipeline"] = "opencv_cascade_success"
 
     except Exception as e:
+        logger.error(f"Error en detección facial: {e}")
         result["debug"]["detection_error"] = str(e)
 
-    # 3. Background Removal (Mask Generation)
+    # Remoción de Fondo
     mask_bytes = None
-    try:
-        image_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        mask_img = remove(image_pil, session=rembg_session, only_mask=True)
-        img_byte_arr = io.BytesIO()
-        mask_img.save(img_byte_arr, format='PNG')
-        mask_bytes = img_byte_arr.getvalue()
-        result["backgroundRemoved"] = True
-    except Exception as e:
-        result["debug"]["bg_removal_error"] = str(e)
+    if rembg_session is not None:
+        try:
+            logger.info("Iniciando remoción de fondo...")
+            image_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            # Forzamos una resolución máxima para evitar picos excesivos de RAM en imágenes gigantes
+            image_pil.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+            
+            mask_img = remove(image_pil, session=rembg_session, only_mask=True)
+            img_byte_arr = io.BytesIO()
+            mask_img.save(img_byte_arr, format='PNG')
+            mask_bytes = img_byte_arr.getvalue()
+            result["backgroundRemoved"] = True
+            logger.info("Fondo removido exitosamente.")
+        except Exception as e:
+            logger.error(f"Error al remover fondo: {e}")
+            result["debug"]["bg_removal_error"] = str(e)
+    else:
+        result["debug"]["bg_removal_error"] = "Modelo rembg no disponible"
 
     return result, mask_bytes

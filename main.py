@@ -3,8 +3,8 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
@@ -19,9 +19,11 @@ class Settings(BaseSettings):
         env_file = ".env"
 
 settings = Settings()
+
+# Configurar logging visible
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("uvicorn.error")
 
-# Add ORIGINALS directory to cache images and bypass Tainted Canvas in the UI
 DATA_DIR = Path("data")
 CACHE_DIR = DATA_DIR / "cache"
 MASKS_DIR = DATA_DIR / "masks"
@@ -35,10 +37,20 @@ app = FastAPI(title="Avatar Vision Service", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in settings.cors_origins.split(",")],
-    allow_credentials=False,  # <-- Se establece en False para evitar fallo crítico con origins ["*"]
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Captura cualquier error no controlado para evitar desconexiones que rompan el CORS
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Error crítico en el servidor: {str(exc)}")
+    return JSONResponse(
+        status_code=500,
+        content={"ok": False, "error": "Error interno del servidor", "debug": str(exc)},
+        headers={"Access-Control-Allow-Origin": "*"}
+    )
 
 class AnalyzeResponse(BaseModel):
     ok: bool
@@ -70,17 +82,16 @@ async def health_check():
 
 @app.get("/image/{image_key}")
 async def get_image(image_key: str):
-    """Serves the original image so the frontend Canvas avoids CORS issues."""
     img_path = ORIGINALS_DIR / image_key
     if not img_path.exists():
-        raise HTTPException(status_code=404, detail="Image not found")
+        raise HTTPException(status_code=404, detail="Imagen no encontrada")
     return FileResponse(img_path, headers={"Access-Control-Allow-Origin": "*"})
 
 @app.get("/mask/{image_key}")
 async def get_mask(image_key: str):
     mask_path = MASKS_DIR / f"{image_key}.png"
     if not mask_path.exists():
-        raise HTTPException(status_code=404, detail="Mask not found")
+        raise HTTPException(status_code=404, detail="Máscara no encontrada")
     return FileResponse(mask_path, media_type="image/png", headers={"Access-Control-Allow-Origin": "*"})
 
 async def get_image_bytes(imageUrl: Optional[str], file: Optional[UploadFile]) -> bytes:
@@ -93,8 +104,8 @@ async def get_image_bytes(imageUrl: Optional[str], file: Optional[UploadFile]) -
                 response.raise_for_status()
                 return response.content
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Failed to fetch image: {str(e)}")
-    raise HTTPException(status_code=400, detail="Must provide either imageUrl or file upload")
+            raise HTTPException(status_code=400, detail=f"No se pudo descargar la imagen: {str(e)}")
+    raise HTTPException(status_code=400, detail="Debe proporcionar un enlace o subir un archivo de imagen")
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_image(
@@ -102,10 +113,11 @@ async def analyze_image(
     file: Optional[UploadFile] = File(None)
 ):
     try:
+        logger.info("Recibiendo petición de análisis...")
         image_bytes = await get_image_bytes(imageUrl, file)
         image_key = hash_image(image_bytes)
+        logger.info(f"Imagen procesada con clave: {image_key}")
         
-        # Save original image for frontend Canvas access
         original_path = ORIGINALS_DIR / image_key
         if not original_path.exists():
             with open(original_path, "wb") as f:
@@ -113,9 +125,11 @@ async def analyze_image(
 
         cache_file = CACHE_DIR / f"{image_key}.json"
         if cache_file.exists():
+            logger.info("Devolviendo resultado desde caché.")
             with open(cache_file, "r") as f:
                 return AnalyzeResponse(**json.load(f))
 
+        logger.info("Iniciando análisis de visión...")
         metadata, mask_bytes = process_image(image_bytes)
         
         mask_available = False
@@ -138,10 +152,11 @@ async def analyze_image(
         with open(cache_file, "w") as f:
             json.dump(response_data, f)
 
+        logger.info("Análisis completado exitosamente.")
         return AnalyzeResponse(**response_data)
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Analysis failed: {str(e)}")
+        logger.error(f"Fallo en el análisis: {str(e)}")
         return AnalyzeResponse(ok=False, error=str(e), debug={"exception": type(e).__name__})
