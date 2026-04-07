@@ -34,12 +34,15 @@ for d in [CACHE_DIR, MASKS_DIR, ORIGINALS_DIR]:
 
 app = FastAPI(title="Avatar Vision Service", version="1.0.0")
 
+# Middleware CORS ultra-permisivo forzado
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in settings.cors_origins.split(",")],
+    allow_origins=["*"],
+    allow_origin_regex=".*",  # Fuerza la coincidencia con cualquier origen sin importar el formato
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]      # Expone todas las cabeceras a la respuesta del navegador
 )
 
 # Captura cualquier error no controlado para evitar desconexiones que rompan el CORS
