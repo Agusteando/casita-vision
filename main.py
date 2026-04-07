@@ -1,7 +1,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -30,29 +30,30 @@ ORIGINALS_DIR = DATA_DIR / "originals"
 for d in [CACHE_DIR, MASKS_DIR, ORIGINALS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
+# Caché de Nivel 1 (Memoria): Almacena las respuestas JSON para acceso instantáneo
+MEMORY_CACHE: Dict[str, dict] = {}
+MAX_MEMORY_CACHE = 10000  # Límite seguro para no saturar RAM en organizaciones grandes
+
 app = FastAPI(title="Avatar Vision Service", version="1.0.0")
 
-# Middleware Universal de CORS: Forzamos las cabeceras para evadir el filtrado de Origin en IIS Proxy
+# Middleware Universal de CORS
 @app.middleware("http")
 async def universal_cors_middleware(request: Request, call_next):
-    # 1. Responder inmediatamente a las peticiones pre-vuelo del navegador (OPTIONS)
     if request.method == "OPTIONS":
         response = JSONResponse(status_code=200, content="OK")
     else:
-        # 2. Procesar la petición real de forma normal
         response = await call_next(request)
     
-    # 3. Inyectar explícitamente las cabeceras CORS en TODAS las respuestas
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-    
-    # Reflejar dinámicamente las cabeceras solicitadas por el cliente, o permitir unas por defecto
     allow_headers = request.headers.get("access-control-request-headers", "Content-Type, Authorization, Accept")
     response.headers["Access-Control-Allow-Headers"] = allow_headers
+    # Exponemos las cabeceras de caché al navegador para que el frontend pueda aprovecharlas
+    response.headers["Access-Control-Expose-Headers"] = "Cache-Control, ETag"
     
     return response
 
-# Captura cualquier error no controlado para evitar desconexiones que rompan el CORS
+# Captura global de errores
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Error crítico en el servidor: {str(exc)}")
@@ -95,17 +96,32 @@ async def health_check():
 
 @app.get("/image/{image_key}")
 async def get_image(image_key: str):
+    """Devuelve la imagen original con políticas agresivas de caché HTTP del lado del cliente."""
     img_path = ORIGINALS_DIR / image_key
     if not img_path.exists():
         raise HTTPException(status_code=404, detail="Imagen no encontrada")
-    return FileResponse(img_path)
+    return FileResponse(
+        img_path,
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "ETag": f'"{image_key}"'
+        }
+    )
 
 @app.get("/mask/{image_key}")
 async def get_mask(image_key: str):
+    """Devuelve la máscara transparente generada con políticas agresivas de caché HTTP."""
     mask_path = MASKS_DIR / f"{image_key}.png"
     if not mask_path.exists():
         raise HTTPException(status_code=404, detail="Máscara no encontrada")
-    return FileResponse(mask_path, media_type="image/png")
+    return FileResponse(
+        mask_path, 
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "ETag": f'"{image_key}-mask"'
+        }
+    )
 
 async def get_image_bytes(imageUrl: Optional[str], file: Optional[UploadFile]) -> bytes:
     if file:
@@ -120,29 +136,52 @@ async def get_image_bytes(imageUrl: Optional[str], file: Optional[UploadFile]) -
             raise HTTPException(status_code=400, detail=f"No se pudo descargar la imagen: {str(e)}")
     raise HTTPException(status_code=400, detail="Debe proporcionar un enlace o subir un archivo de imagen")
 
+def _prepare_response_with_cache_flag(base_data: dict, source: str) -> dict:
+    """Clona el diccionario e inyecta la bandera de origen de caché sin mutar el original en memoria."""
+    response_copy = dict(base_data)
+    response_copy["debug"] = dict(response_copy.get("debug", {}))
+    response_copy["debug"]["cache_source"] = source
+    return response_copy
+
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_image(
     imageUrl: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None)
 ):
     try:
-        logger.info("Recibiendo petición de análisis...")
+        # Descargamos o leemos los bytes primero para generar una firma única inmutable
         image_bytes = await get_image_bytes(imageUrl, file)
         image_key = hash_image(image_bytes)
-        logger.info(f"Imagen procesada con clave: {image_key}")
         
+        # 1. BÚSQUEDA EN CACHÉ DE NIVEL 1 (Memoria RAM ultra-rápida)
+        if image_key in MEMORY_CACHE:
+            logger.info(f"⚡ [Hit Memoria] Análisis instantáneo servido para: {image_key}")
+            return AnalyzeResponse(**_prepare_response_with_cache_flag(MEMORY_CACHE[image_key], "memory"))
+
+        # 2. BÚSQUEDA EN CACHÉ DE NIVEL 2 (Disco duro persistente)
+        cache_file = CACHE_DIR / f"{image_key}.json"
+        if cache_file.exists():
+            logger.info(f"📂 [Hit Disco] Análisis recuperado de disco para: {image_key}")
+            with open(cache_file, "r") as f:
+                disk_data = json.load(f)
+            
+            # Subimos el dato a memoria para el próximo request
+            if len(MEMORY_CACHE) >= MAX_MEMORY_CACHE:
+                MEMORY_CACHE.clear()  # Previene fugas de memoria a largo plazo
+            MEMORY_CACHE[image_key] = disk_data
+            
+            return AnalyzeResponse(**_prepare_response_with_cache_flag(disk_data, "disk"))
+
+        # 3. PROCESAMIENTO NUEVO (Miss de caché)
+        logger.info(f"⚙️ [Miss] Procesando y analizando nueva imagen: {image_key}")
+        
+        # Guardar imagen original para evadir el problema de "Tainted Canvas" en el UI Frontend
         original_path = ORIGINALS_DIR / image_key
         if not original_path.exists():
             with open(original_path, "wb") as f:
                 f.write(image_bytes)
 
-        cache_file = CACHE_DIR / f"{image_key}.json"
-        if cache_file.exists():
-            logger.info("Devolviendo resultado desde caché.")
-            with open(cache_file, "r") as f:
-                return AnalyzeResponse(**json.load(f))
-
-        logger.info("Iniciando análisis de visión...")
+        # Análisis real mediante Inteligencia Artificial y OpenCV
         metadata, mask_bytes = process_image(image_bytes)
         
         mask_available = False
@@ -162,11 +201,18 @@ async def analyze_image(
             **metadata
         }
 
+        # Guardar en Disco (Nivel 2)
         with open(cache_file, "w") as f:
             json.dump(response_data, f)
+            
+        # Guardar en Memoria (Nivel 1)
+        if len(MEMORY_CACHE) >= MAX_MEMORY_CACHE:
+            MEMORY_CACHE.clear()
+        MEMORY_CACHE[image_key] = response_data
 
-        logger.info("Análisis completado exitosamente.")
-        return AnalyzeResponse(**response_data)
+        logger.info(f"✅ Análisis completado y guardado permanentemente para: {image_key}")
+        
+        return AnalyzeResponse(**_prepare_response_with_cache_flag(response_data, "miss"))
 
     except HTTPException:
         raise
