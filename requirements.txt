@@ -4,6 +4,6 @@ pydantic==2.8.2
 pydantic-settings==2.3.4
 python-multipart==0.0.9
 opencv-python-headless==4.10.0.84
-rembg==2.0.74
+rembg[cpu]==2.0.74
 Pillow==12.1.0
 httpx==0.27.0
