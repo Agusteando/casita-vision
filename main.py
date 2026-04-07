@@ -21,11 +21,14 @@ class Settings(BaseSettings):
 settings = Settings()
 logger = logging.getLogger("uvicorn.error")
 
+# Add ORIGINALS directory to cache images and bypass Tainted Canvas in the UI
 DATA_DIR = Path("data")
 CACHE_DIR = DATA_DIR / "cache"
 MASKS_DIR = DATA_DIR / "masks"
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
-MASKS_DIR.mkdir(parents=True, exist_ok=True)
+ORIGINALS_DIR = DATA_DIR / "originals" 
+
+for d in [CACHE_DIR, MASKS_DIR, ORIGINALS_DIR]:
+    d.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="Avatar Vision Service", version="1.0.0")
 
@@ -63,15 +66,22 @@ async def serve_ui():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "service": "vision-service"}
+    return {"status": "healthy"}
+
+@app.get("/image/{image_key}")
+async def get_image(image_key: str):
+    """Serves the original image so the frontend Canvas avoids CORS issues."""
+    img_path = ORIGINALS_DIR / image_key
+    if not img_path.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(img_path, headers={"Access-Control-Allow-Origin": "*"})
 
 @app.get("/mask/{image_key}")
 async def get_mask(image_key: str):
     mask_path = MASKS_DIR / f"{image_key}.png"
     if not mask_path.exists():
         raise HTTPException(status_code=404, detail="Mask not found")
-    headers = {"Access-Control-Allow-Origin": "*"}
-    return FileResponse(mask_path, media_type="image/png", headers=headers)
+    return FileResponse(mask_path, media_type="image/png", headers={"Access-Control-Allow-Origin": "*"})
 
 async def get_image_bytes(imageUrl: Optional[str], file: Optional[UploadFile]) -> bytes:
     if file:
@@ -94,8 +104,14 @@ async def analyze_image(
     try:
         image_bytes = await get_image_bytes(imageUrl, file)
         image_key = hash_image(image_bytes)
-        cache_file = CACHE_DIR / f"{image_key}.json"
         
+        # Save original image for frontend Canvas access
+        original_path = ORIGINALS_DIR / image_key
+        if not original_path.exists():
+            with open(original_path, "wb") as f:
+                f.write(image_bytes)
+
+        cache_file = CACHE_DIR / f"{image_key}.json"
         if cache_file.exists():
             with open(cache_file, "r") as f:
                 return AnalyzeResponse(**json.load(f))
