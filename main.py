@@ -35,7 +35,7 @@ app = FastAPI(title="Avatar Vision Service", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in settings.cors_origins.split(",")],
-    allow_credentials=True,
+    allow_credentials=False,  # <-- Se establece en False para evitar fallo crítico con origins ["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -60,7 +60,7 @@ class AnalyzeResponse(BaseModel):
 async def serve_ui():
     index_path = Path("index.html")
     if not index_path.exists():
-        return "<h1>Error: index.html not found!</h1>"
+        return "<h1>Error: No se encontró el archivo index.html</h1>"
     with open(index_path, "r", encoding="utf-8") as f:
         return f.read()
 

@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vision API Tester | CasitaApps</title>
+    <title>Prueba de API de Visión | CasitaApps</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .checkerboard {
@@ -28,7 +28,7 @@
         <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
             <div class="flex items-center gap-3">
                 <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold">V</div>
-                <h1 class="text-xl font-bold">Vision API Tester</h1>
+                <h1 class="text-xl font-bold">Prueba de API de Visión</h1>
             </div>
         </div>
     </header>
@@ -37,40 +37,40 @@
         
         <div class="lg:col-span-4 space-y-6">
             <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-                <h2 class="font-bold text-lg mb-4">Image Input</h2>
+                <h2 class="font-bold text-lg mb-4">Entrada de imagen</h2>
                 <div id="dropzone" class="border-2 border-dashed border-slate-300 rounded-xl p-8 text-center cursor-pointer hover:bg-slate-50 transition relative group">
                     <input type="file" id="fileInput" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
                     <svg class="w-10 h-10 mx-auto text-slate-400 group-hover:text-blue-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
-                    <p class="text-sm font-medium">Drag & Drop profile image</p>
+                    <p class="text-sm font-medium">Arrastre y suelte una imagen de perfil</p>
                 </div>
                 <div class="flex items-center gap-3 my-4">
-                    <hr class="flex-1 border-slate-200"><span class="text-xs text-slate-400 font-bold uppercase">or</span><hr class="flex-1 border-slate-200">
+                    <hr class="flex-1 border-slate-200"><span class="text-xs text-slate-400 font-bold uppercase">o</span><hr class="flex-1 border-slate-200">
                 </div>
                 <div class="flex gap-2">
-                    <input type="text" id="urlInput" placeholder="Paste image URL..." class="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
-                    <button onclick="analyzeImage()" id="analyzeBtn" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-700">Analyze</button>
+                    <input type="text" id="urlInput" placeholder="Pegue el enlace de la imagen..." class="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                    <button onclick="analyzeImage()" id="analyzeBtn" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-700">Analizar</button>
                 </div>
             </div>
 
             <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[400px]">
                 <div class="bg-slate-800 px-4 py-3 border-b border-slate-900">
-                    <h2 class="font-bold text-sm text-slate-200">API JSON Contract</h2>
+                    <h2 class="font-bold text-sm text-slate-200">Respuesta de la API</h2>
                 </div>
                 <div class="bg-slate-900 flex-1 overflow-auto p-4">
-                    <pre id="jsonOutput" class="text-xs text-green-400 font-mono">Waiting...</pre>
+                    <pre id="jsonOutput" class="text-xs text-green-400 font-mono">Esperando...</pre>
                 </div>
             </div>
         </div>
 
         <div class="lg:col-span-8 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[750px]">
             <div class="flex border-b border-slate-200 px-6 pt-4 gap-6 text-sm font-medium">
-                <button onclick="switchTab('vision')" id="tab-vision" class="pb-3 tab-active">Vision Overlays</button>
-                <button onclick="switchTab('background')" id="tab-background" class="pb-3 text-slate-500">Background Swapper</button>
+                <button onclick="switchTab('vision')" id="tab-vision" class="pb-3 tab-active">Superposiciones visuales</button>
+                <button onclick="switchTab('background')" id="tab-background" class="pb-3 text-slate-500">Reemplazo de fondo</button>
             </div>
 
             <div class="flex-1 bg-slate-100 relative overflow-hidden p-6">
                 
-                <p id="placeholder" class="text-slate-400 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-0 font-medium">Upload an image to see results</p>
+                <p id="placeholder" class="text-slate-400 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-0 font-medium">Suba una imagen para ver los resultados</p>
 
                 <!-- TAB 1: Vision Overlays -->
                 <div id="vision-view" class="view-layer view-hidden">
@@ -146,14 +146,14 @@
 
         async function analyzeImage() {
             const urlInput = document.getElementById('urlInput').value;
-            if (!currentFile && !urlInput) return alert("Provide an image file or URL");
+            if (!currentFile && !urlInput) return alert("Por favor, proporcione un archivo o enlace de imagen.");
 
             const btn = document.getElementById('analyzeBtn');
             const output = document.getElementById('jsonOutput');
             const img = document.getElementById('sourceImage');
 
             btn.disabled = true;
-            output.innerText = "Analyzing...";
+            output.innerText = "Analizando...";
             document.getElementById('placeholder').style.display = 'none';
             switchTab('vision');
 
@@ -163,7 +163,7 @@
                 else formData.append("imageUrl", urlInput);
 
                 const response = await fetch(`${serverUrl}/analyze`, { method: 'POST', body: formData });
-                if (!response.ok) throw new Error(`Server returned ${response.status}`);
+                if (!response.ok) throw new Error(`El servidor respondió con código ${response.status}`);
 
                 const data = await response.json();
                 lastApiData = data;
@@ -178,7 +178,7 @@
                         if(data.maskAvailable) buildCompositedBackground(img, data.maskUrl);
                     };
                 } else {
-                    alert("Analysis Failed: " + data.error);
+                    alert("El análisis falló: " + data.error);
                 }
             } catch (err) {
                 output.innerText = "Error: " + err.message;
