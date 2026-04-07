@@ -6,17 +6,17 @@ from typing import Optional, Dict, Any
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 import httpx
 
 from vision import process_image, hash_image
 
 class Settings(BaseSettings):
-    cors_origins: str = "*"  # Restaurado para evitar conflictos con el .env existente
+    cors_origins: str = "*"
     base_url: str = "http://localhost:8000"
-    class Config:
-        env_file = ".env"
-        extra = "ignore"     # Ignora de forma segura cualquier otra variable obsoleta en el .env
+    
+    # Sintaxis correcta de Pydantic v2 para leer el .env y variables de entorno de forma estricta
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 settings = Settings()
 
@@ -138,11 +138,21 @@ async def get_image_bytes(imageUrl: Optional[str], file: Optional[UploadFile]) -
             raise HTTPException(status_code=400, detail=f"No se pudo descargar la imagen: {str(e)}")
     raise HTTPException(status_code=400, detail="Debe proporcionar un enlace o subir un archivo de imagen")
 
-def _prepare_response_with_cache_flag(base_data: dict, source: str) -> dict:
-    """Clona el diccionario e inyecta la bandera de origen de caché sin mutar el original en memoria."""
+def _format_response(base_data: dict, source: str, image_key: str) -> dict:
+    """
+    Clona el diccionario, inyecta la bandera de origen de caché y 
+    construye URLs absolutas dinámicamente para evadir dominios obsoletos guardados en disco.
+    """
     response_copy = dict(base_data)
     response_copy["debug"] = dict(response_copy.get("debug", {}))
     response_copy["debug"]["cache_source"] = source
+    
+    # Reconstruimos la URL de la máscara en tiempo real usando el BASE_URL actual del entorno
+    if response_copy.get("maskAvailable"):
+        response_copy["maskUrl"] = f"{settings.base_url.rstrip('/')}/mask/{image_key}"
+    else:
+        response_copy["maskUrl"] = None
+        
     return response_copy
 
 @app.post("/analyze", response_model=AnalyzeResponse)
@@ -158,7 +168,7 @@ async def analyze_image(
         # 1. BÚSQUEDA EN CACHÉ DE NIVEL 1 (Memoria RAM ultra-rápida)
         if image_key in MEMORY_CACHE:
             logger.info(f"⚡ [Hit Memoria] Análisis instantáneo servido para: {image_key}")
-            return AnalyzeResponse(**_prepare_response_with_cache_flag(MEMORY_CACHE[image_key], "memory"))
+            return AnalyzeResponse(**_format_response(MEMORY_CACHE[image_key], "memory", image_key))
 
         # 2. BÚSQUEDA EN CACHÉ DE NIVEL 2 (Disco duro persistente)
         cache_file = CACHE_DIR / f"{image_key}.json"
@@ -172,7 +182,7 @@ async def analyze_image(
                 MEMORY_CACHE.clear()  # Previene fugas de memoria a largo plazo
             MEMORY_CACHE[image_key] = disk_data
             
-            return AnalyzeResponse(**_prepare_response_with_cache_flag(disk_data, "disk"))
+            return AnalyzeResponse(**_format_response(disk_data, "disk", image_key))
 
         # 3. PROCESAMIENTO NUEVO (Miss de caché)
         logger.info(f"⚙️ [Miss] Procesando y analizando nueva imagen: {image_key}")
@@ -187,19 +197,17 @@ async def analyze_image(
         metadata, mask_bytes = process_image(image_bytes)
         
         mask_available = False
-        mask_url = None
         if mask_bytes and metadata.get("backgroundRemoved"):
             mask_path = MASKS_DIR / f"{image_key}.png"
             with open(mask_path, "wb") as f:
                 f.write(mask_bytes)
             mask_available = True
-            mask_url = f"{settings.base_url.rstrip('/')}/mask/{image_key}"
 
+        # NOTA: Ya no guardamos maskUrl duro en el JSON, se calcula dinámicamente
         response_data = {
             "ok": True,
             "imageKey": image_key,
             "maskAvailable": mask_available,
-            "maskUrl": mask_url,
             **metadata
         }
 
@@ -214,7 +222,7 @@ async def analyze_image(
 
         logger.info(f"✅ Análisis completado y guardado permanentemente para: {image_key}")
         
-        return AnalyzeResponse(**_prepare_response_with_cache_flag(response_data, "miss"))
+        return AnalyzeResponse(**_format_response(response_data, "miss", image_key))
 
     except HTTPException:
         raise
