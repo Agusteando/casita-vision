@@ -5,7 +5,6 @@ from typing import Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 import httpx
@@ -13,7 +12,6 @@ import httpx
 from vision import process_image, hash_image
 
 class Settings(BaseSettings):
-    cors_origins: str = "*"
     base_url: str = "http://localhost:8000"
     class Config:
         env_file = ".env"
@@ -34,16 +32,25 @@ for d in [CACHE_DIR, MASKS_DIR, ORIGINALS_DIR]:
 
 app = FastAPI(title="Avatar Vision Service", version="1.0.0")
 
-# Middleware CORS ultra-permisivo forzado
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_origin_regex=".*",  # Fuerza la coincidencia con cualquier origen sin importar el formato
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"]      # Expone todas las cabeceras a la respuesta del navegador
-)
+# Middleware Universal de CORS: Forzamos las cabeceras para evadir el filtrado de Origin en IIS Proxy
+@app.middleware("http")
+async def universal_cors_middleware(request: Request, call_next):
+    # 1. Responder inmediatamente a las peticiones pre-vuelo del navegador (OPTIONS)
+    if request.method == "OPTIONS":
+        response = JSONResponse(status_code=200, content="OK")
+    else:
+        # 2. Procesar la petición real de forma normal
+        response = await call_next(request)
+    
+    # 3. Inyectar explícitamente las cabeceras CORS en TODAS las respuestas
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    
+    # Reflejar dinámicamente las cabeceras solicitadas por el cliente, o permitir unas por defecto
+    allow_headers = request.headers.get("access-control-request-headers", "Content-Type, Authorization, Accept")
+    response.headers["Access-Control-Allow-Headers"] = allow_headers
+    
+    return response
 
 # Captura cualquier error no controlado para evitar desconexiones que rompan el CORS
 @app.exception_handler(Exception)
@@ -52,7 +59,10 @@ async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
         content={"ok": False, "error": "Error interno del servidor", "debug": str(exc)},
-        headers={"Access-Control-Allow-Origin": "*"}
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*"
+        }
     )
 
 class AnalyzeResponse(BaseModel):
@@ -88,14 +98,14 @@ async def get_image(image_key: str):
     img_path = ORIGINALS_DIR / image_key
     if not img_path.exists():
         raise HTTPException(status_code=404, detail="Imagen no encontrada")
-    return FileResponse(img_path, headers={"Access-Control-Allow-Origin": "*"})
+    return FileResponse(img_path)
 
 @app.get("/mask/{image_key}")
 async def get_mask(image_key: str):
     mask_path = MASKS_DIR / f"{image_key}.png"
     if not mask_path.exists():
         raise HTTPException(status_code=404, detail="Máscara no encontrada")
-    return FileResponse(mask_path, media_type="image/png", headers={"Access-Control-Allow-Origin": "*"})
+    return FileResponse(mask_path, media_type="image/png")
 
 async def get_image_bytes(imageUrl: Optional[str], file: Optional[UploadFile]) -> bytes:
     if file:
