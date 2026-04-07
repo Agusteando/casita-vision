@@ -12,9 +12,11 @@ import httpx
 from vision import process_image, hash_image
 
 class Settings(BaseSettings):
+    cors_origins: str = "*"  # Restaurado para evitar conflictos con el .env existente
     base_url: str = "http://localhost:8000"
     class Config:
         env_file = ".env"
+        extra = "ignore"     # Ignora de forma segura cualquier otra variable obsoleta en el .env
 
 settings = Settings()
 
